@@ -1,0 +1,20 @@
+# systemd unit — copy to /etc/systemd/system/integration-factorio.service,
+# put the secrets into /etc/integration-factorio.env (chmod 600):
+#   LH_INGEST_URL=https://dock.at-harbor.com/v1/ingest/123
+#   LH_INGEST_SECRET=…
+#   FACTORIO_RCON_PASSWORD=…
+[Unit]
+Description=LinkHarbor Factorio agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/integration-factorio.env
+ExecStart=/usr/bin/python3 /opt/integration-factorio/agent.py --host 127.0.0.1 --port 27015 --name "Our Factory" --address "203.0.113.10:34197" --url "https://discord.gg/xyz"
+Restart=always
+RestartSec=10
+User=nobody
+
+[Install]
+WantedBy=multi-user.target
