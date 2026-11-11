@@ -2,8 +2,9 @@
 
 A single-file Python agent that polls a Factorio server over RCON and pushes
 the live state to your [LinkHarbor](https://linkharbor.com) bio page: a
-game-server card with Online/Offline, the number of players, player names and
-the map time, plus join/leave events for push notifications to your followers.
+game-server card with Online/Offline, the number of players, player names and,
+if you like, the map time or your own text, plus join/leave events for push
+notifications to your followers.
 
 It uses the RCON port the Factorio headless server can open on start, so
 nothing is installed on the server. Standard library only, Python 3.10 or newer.
@@ -45,8 +46,39 @@ port is firewalled from the outside.
 | `player.left` | a name disappears | `{player}` and the above |
 
 The state is sent with every event and every `--heartbeat` minutes (default
-10). `{description}` is the output of `/time` ("Map time: …").
+10). `{description}` is the card text (see below), empty without one.
 `--no-player-names` sends counts only.
+
+## Card text
+
+Without options the card shows no text under the server name. Two ways to
+add one:
+
+* `--map-time`: "Map time: 3 hours 12 minutes" (the `/time` output). Factorio
+  pauses the game while nobody is connected, so the time only moves while
+  people play.
+* `--description "…"`: your own text, with placeholders wherever you want
+  them. It replaces `--map-time`.
+
+| Placeholder | Value |
+|---|---|
+| `{name}` | `--name` |
+| `{players}` | players online now |
+| `{max}` | the player limit (empty when there is none) |
+| `{time}` | the map time from `/time` (empty while offline) |
+| `{address}` | `--address` |
+| `{player_list}` | the names of the players online, comma-separated (empty with `--no-player-names`) |
+| `{status}` | `online` or `offline` |
+| your own | `--var key=value`, repeatable: `{key}` |
+
+```bash
+python3 agent.py … --description "{players} of {max} online · {time} on the map · {mods}" \
+  --var mods="Krastorio 2"
+```
+
+An unknown placeholder stops the agent at start with a message, so a typo
+never ends up on your page. The text is cut at 200 characters and is also
+shown while the server is offline (`{players}` is then 0).
 
 Suggested push rule (dashboard, Integrations, Push rules, Custom (API), event `player.joined`): batch window 10 min, title "🎮 {count} players joined", body
 "{player_list} are now on {name}", minimum pause 5 min.
@@ -67,6 +99,9 @@ Suggested push rule (dashboard, Integrations, Push rules, Custom (API), event `p
 --interval SECONDS     polling interval (default 60, minimum 5)
 --heartbeat MINUTES    state-only update interval (default 10, 0 = only on change)
 --no-player-names      send counts only
+--map-time             card text "Map time: …"
+--description TEXT     card text with placeholders (see "Card text")
+--var KEY=VALUE        your own placeholder {KEY} for --description (repeatable)
 --once                 poll once, send, exit
 -v                     verbose logging
 ```

@@ -4,8 +4,8 @@
 Connects to the server's RCON port (Source RCON protocol, default 27015),
 runs `/players online`, `/time` and `/config get max-players`, and pushes the
 state to a LinkHarbor "Custom (API)" integration: a live game-server card on
-your bio page (players, map time, a "Join in game" button for Steam) and push
-notifications for joins.
+your bio page (players, a "Join in game" button for Steam, optionally the map
+time or your own text with placeholders) and push notifications for joins.
 
     export LH_INGEST_URL="https://dock.at-harbor.com/v1/ingest/123"
     export LH_INGEST_SECRET="…"
@@ -57,6 +57,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--interval", type=int, default=60, help="seconds between polls (default 60)")
     p.add_argument("--heartbeat", type=int, default=10, help="minutes between state-only updates (0 = only on change)")
     p.add_argument("--no-player-names", action="store_true", help="don't send player names")
+    p.add_argument("--map-time", action="store_true", help='card text "Map time: …" (the /time output)')
+    p.add_argument("--description", default="",
+                   help="card text with placeholders, e.g. \"{players} of {max} online · {time} on the map\" (see README)")
+    p.add_argument("--var", action="append", default=[], metavar="KEY=VALUE",
+                   help="your own placeholder {KEY} for --description (repeatable)")
     p.add_argument("--ingest-url", default=os.environ.get("LH_INGEST_URL", ""))
     p.add_argument("--ingest-secret", default=os.environ.get("LH_INGEST_SECRET", ""))
     p.add_argument("--once", action="store_true", help="poll once, send, exit")
@@ -66,6 +71,19 @@ def parse_args() -> argparse.Namespace:
         p.error("set LH_INGEST_URL and LH_INGEST_SECRET (or --ingest-url / --ingest-secret)")
     if not a.password:
         p.error("set FACTORIO_RCON_PASSWORD (or --password)")
+    a.vars = {}
+    for item in a.var:
+        key, sep, value = item.partition("=")
+        key = key.strip().lower()
+        if not sep or not re.fullmatch(r"[a-z0-9_]{1,40}", key):
+            p.error(f"--var {item!r}: use KEY=VALUE, KEY with a-z, 0-9 and _")
+        if key in BUILTIN_PLACEHOLDERS:
+            p.error(f"--var {key}: {{{key}}} is filled by the agent itself")
+        a.vars[key] = value.strip()
+    unknown = sorted(set(re.findall(r"\{([a-z0-9_]+)\}", a.description)) - set(BUILTIN_PLACEHOLDERS) - set(a.vars))
+    if unknown:
+        p.error("--description: unknown placeholder(s) " + ", ".join("{" + u + "}" for u in unknown)
+                + " (built in: " + ", ".join("{" + k + "}" for k in BUILTIN_PLACEHOLDERS) + "; add your own with --var)")
     return a
 
 
@@ -206,6 +224,32 @@ def query(host: str, port: int, password: str) -> tuple[dict | None, list[str]]:
     return {"players": count, "time": " ".join(time_out.split()), "max": parse_max_players(max_out)}, names
 
 
+#: Placeholders the agent fills in --description itself.
+BUILTIN_PLACEHOLDERS = ("name", "players", "max", "time", "address", "player_list", "status")
+
+
+def describe(a: argparse.Namespace, info: dict | None, names: list[str]) -> str:
+    """The card text: --description with its placeholders filled, else
+    "Map time: …" with --map-time, else nothing (at most 200 characters)."""
+    if a.description:
+        limit = a.max_players if a.max_players is not None else (info or {}).get("max", 0)
+        values = {
+            "name": a.name,
+            "players": str((info or {}).get("players", 0)),
+            "max": str(limit) if limit else "",
+            "time": (info or {}).get("time", ""),
+            "address": a.address,
+            "player_list": ", ".join(names) if info and not a.no_player_names else "",
+            "status": "online" if info else "offline",
+            **a.vars,
+        }
+        text = re.sub(r"\{([a-z0-9_]+)\}", lambda m: values.get(m.group(1), m.group(0)), a.description)
+        return " ".join(text.split())[:200]
+    if a.map_time and info and info.get("time"):
+        return f"Map time: {info['time']}"[:200]
+    return ""
+
+
 def build_state(a: argparse.Namespace, info: dict | None, names: list[str]) -> dict:
     s: dict = {"type": "game_server", "name": a.name, "game": "Factorio"}
     if a.address:
@@ -218,6 +262,9 @@ def build_state(a: argparse.Namespace, info: dict | None, names: list[str]) -> d
         s["image_url"] = a.image_url
     if a.address and not a.no_join and join_url(a.address):
         s["join_url"] = join_url(a.address)
+    text = describe(a, info, names)
+    if text:
+        s["description"] = text
     if info is None:
         s.update(online=False, players_online=0, players=[])
         return s
@@ -226,7 +273,6 @@ def build_state(a: argparse.Namespace, info: dict | None, names: list[str]) -> d
         players_online=info["players"],
         players_max=a.max_players if a.max_players is not None else info.get("max", 0),
         players=[] if a.no_player_names else names[:50],
-        description=info["time"][:200],
     )
     return s
 
