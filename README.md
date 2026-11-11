@@ -7,8 +7,11 @@ the map time, plus join/leave events for push notifications to your followers.
 
 It uses the RCON port the Factorio headless server can open on start, so
 nothing is installed on the server. Standard library only, Python 3.10 or newer.
-Factorio does not report a player limit over RCON, so the card shows the
-player count without a maximum.
+The card shows the player count (also 0), with the server's player limit
+when one is set (`/config get max-players`, or `--max-players`). With
+`--address`, the card gets a "Join in game" button that starts Factorio on
+Steam and connects to your server (computers only; players without the Steam
+version use the address).
 
 Part of the [LinkHarbor integrations](https://github.com/linkharbor/integrations)
 family, one repo per game or tool.
@@ -59,6 +62,8 @@ Suggested push rule (dashboard, Integrations, Push rules, Custom (API), event `p
 --url URL              link behind the card's button
 --cta TEXT             button label (default "Join server")
 --image-url URL        banner image (large layout)
+--max-players N        player limit shown as "n / N" (default: read from the server; 0 = no limit)
+--no-join              no "Join in game" button (default: a Steam button when --address is set)
 --interval SECONDS     polling interval (default 60, minimum 5)
 --heartbeat MINUTES    state-only update interval (default 10, 0 = only on change)
 --no-player-names      send counts only
@@ -78,7 +83,8 @@ Factorio has no RCON by default. Add two flags to the server start line:
 (`--rcon-bind 127.0.0.1:27015` instead of `--rcon-port` keeps the port local
 when the agent runs on the same machine.) The password goes into
 `FACTORIO_RCON_PASSWORD`. The agent opens a new connection every poll and runs
-`/players online` and `/time`; nothing is changed on the server. RCON is plain
+`/players online`, `/time` and `/config get max-players`; nothing is changed on
+the server. RCON is plain
 TCP without encryption, so keep the port on a private network or behind a
 firewall.
 

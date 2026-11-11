@@ -2,9 +2,10 @@
 """LinkHarbor agent for Factorio servers.
 
 Connects to the server's RCON port (Source RCON protocol, default 27015),
-runs `/players online` and `/time`, and pushes the state to a LinkHarbor
-"Custom (API)" integration: a live game-server card on your bio page (players,
-map time) and push notifications for joins.
+runs `/players online`, `/time` and `/config get max-players`, and pushes the
+state to a LinkHarbor "Custom (API)" integration: a live game-server card on
+your bio page (players, map time, a "Join in game" button for Steam) and push
+notifications for joins.
 
     export LH_INGEST_URL="https://dock.at-harbor.com/v1/ingest/123"
     export LH_INGEST_SECRET="…"
@@ -49,6 +50,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--url", default="", help="link behind the card's button (Discord, website)")
     p.add_argument("--cta", default="Join server", help="button label")
     p.add_argument("--image-url", default="", help="banner image for the large layout")
+    p.add_argument("--max-players", type=int, default=None,
+                   help="player limit shown as n / max (default: read from the server, 0 = no limit)")
+    p.add_argument("--no-join", action="store_true",
+                   help="no \"Join in game\" button (default: one for Steam when --address is set)")
     p.add_argument("--interval", type=int, default=60, help="seconds between polls (default 60)")
     p.add_argument("--heartbeat", type=int, default=10, help="minutes between state-only updates (0 = only on change)")
     p.add_argument("--no-player-names", action="store_true", help="don't send player names")
@@ -173,10 +178,24 @@ def parse_players(text: str) -> tuple[int, list[str]]:
     return max(count, len(names)), names
 
 
+def parse_max_players(text: str) -> int:
+    """`/config get max-players` → "0" (no limit) or "16"; anything else → 0."""
+    m = re.search(r"(\d+)\s*$", text.strip())
+    return int(m.group(1)) if m else 0
+
+
+def join_url(address: str) -> str:
+    """Steam link that starts Factorio and connects (`--mp-connect host:port`), or ""."""
+    m = re.fullmatch(r"([A-Za-z0-9.-]{1,253})(?::(\d{1,5}))?", address.strip())
+    if not m or not (0 < int(m.group(2) or 34197) <= 65535):
+        return ""
+    return f"steam://run/427520//--mp-connect%20{m.group(1)}:{m.group(2) or 34197}/"
+
+
 def query(host: str, port: int, password: str) -> tuple[dict | None, list[str]]:
     """Returns (info, player names) or (None, []) when the server is unreachable."""
     try:
-        players_out, time_out = rcon(host, port, password, ["/players online", "/time"])
+        players_out, time_out, max_out = rcon(host, port, password, ["/players online", "/time", "/config get max-players"])
     except RconAuthError as e:
         log.error("%s", e)
         return None, []
@@ -184,7 +203,7 @@ def query(host: str, port: int, password: str) -> tuple[dict | None, list[str]]:
         log.debug("rcon failed: %s", e)
         return None, []
     count, names = parse_players(players_out)
-    return {"players": count, "time": " ".join(time_out.split())}, names
+    return {"players": count, "time": " ".join(time_out.split()), "max": parse_max_players(max_out)}, names
 
 
 def build_state(a: argparse.Namespace, info: dict | None, names: list[str]) -> dict:
@@ -197,12 +216,15 @@ def build_state(a: argparse.Namespace, info: dict | None, names: list[str]) -> d
         s["cta"] = a.cta
     if a.image_url:
         s["image_url"] = a.image_url
+    if a.address and not a.no_join and join_url(a.address):
+        s["join_url"] = join_url(a.address)
     if info is None:
         s.update(online=False, players_online=0, players=[])
         return s
     s.update(
         online=True,
         players_online=info["players"],
+        players_max=a.max_players if a.max_players is not None else info.get("max", 0),
         players=[] if a.no_player_names else names[:50],
         description=info["time"][:200],
     )
